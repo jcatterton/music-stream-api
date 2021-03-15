@@ -9,7 +9,6 @@ if [[ ${CONTEXT} != "justin" ]]; then
 fi
 
 echo "Updating to version ${VERSION}..."
-npm version ${VERSION} --allow-same-version --no-git-tag-version
 sed -i '' -E s/tag:\ [0-9]*\.[0-9]*\.[0-9]*\([-][A-Za-z0-9.-]+\)?/tag:\ ${VERSION}/g ./${CHART_REF}/values.yaml
 sed -i '' -E s/version:\ [0-9]*\.[0-9]*\.[0-9]*\([-][A-Za-z0-9.-]+\)?/version:\ ${VERSION}/g ./${CHART_REF}/Chart.yaml
 
