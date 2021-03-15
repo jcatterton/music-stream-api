@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"go.mongodb.org/mongo-driver/bson"
+
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"time"
 
 	"music-stream-api/pkg/dao"
@@ -16,11 +19,18 @@ import (
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"github.com/kkdai/youtube/v2"
 	"github.com/sirupsen/logrus"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
+
+type YoutubeClient interface {
+	GetVideo(videoId string) (*youtube.Video, error)
+	GetStream(video *youtube.Video, format *youtube.Format) (*http.Response, error)
+}
 
 func ListenAndServe() error {
 	headers := handlers.AllowedHeaders([]string{"X-Requested-With", "Content-Type"})
@@ -51,14 +61,16 @@ func route() (*mux.Router, error) {
 		return nil, err
 	}
 
-	dbHandler := dao.MongoClient {
-		Client:					dbClient,
-		Database:				"db",
-		TrackCollection:		"songs",
-		PlaylistCollection:		"playlists",
-		AudioCollection:		"fs.files",
-		AudioChunkCollection:	"fs.chunks",
+	dbHandler := dao.MongoClient{
+		Client:               dbClient,
+		Database:             "db",
+		TrackCollection:      "songs",
+		PlaylistCollection:   "playlists",
+		AudioCollection:      "fs.files",
+		AudioChunkCollection: "fs.chunks",
 	}
+
+	client := youtube.Client{}
 
 	r := mux.NewRouter()
 
@@ -69,6 +81,7 @@ func route() (*mux.Router, error) {
 	r.HandleFunc("/track/{id}", updateTrack(&dbHandler)).Methods(http.MethodPut)
 	r.HandleFunc("/track/{id}", deleteTrack(&dbHandler)).Methods(http.MethodDelete)
 	r.HandleFunc("/tracks", getTracks(&dbHandler)).Methods(http.MethodGet)
+	r.HandleFunc("/youtube/track", uploadTrackFromYoutubeLink(&dbHandler, &client)).Methods(http.MethodPost)
 
 	r.HandleFunc("/playlist", addPlaylist(&dbHandler)).Methods(http.MethodPost)
 	r.HandleFunc("/playlist/{playlistid}/track/{trackid}", addTrackToPlaylist(&dbHandler)).Methods(http.MethodPost)
@@ -148,6 +161,125 @@ func uploadTrack(handler dao.DbHandler) http.HandlerFunc {
 
 		if _, ok := audioID.(primitive.ObjectID); !ok {
 			logrus.WithError(err).Error("Did not receive valid audioFileID from upload stream")
+			respondWithError(w, http.StatusInternalServerError, "invalid audioID received from handler")
+			return
+		}
+		track.AudioFileID = audioID.(primitive.ObjectID)
+
+		if err := handler.AddTrack(ctx, track); err != nil {
+			logrus.WithError(err).Error("Error adding track to database")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		respondWithSuccess(w, http.StatusOK, "Track added successfully")
+		return
+	}
+}
+
+func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+
+		var ytRequest models.YoutubeRequest
+		if err := json.NewDecoder(r.Body).Decode(&ytRequest); err != nil {
+			logrus.WithError(err).Error("Error decoding request into JSON")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		videoId := strings.Split(strings.Split(ytRequest.YoutubeLink, "v=")[1], "&")[0]
+
+		video, err := client.GetVideo(videoId)
+		if err != nil {
+			logrus.WithError(err).Error("Error getting video")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		resp, err := client.GetStream(video, &video.Formats[0])
+		if err != nil {
+			logrus.WithError(err).Error("Error getting video stream")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer func() {
+			if err = resp.Body.Close(); err != nil {
+				logrus.WithError(err).Error("Error closing response body")
+			}
+		}()
+
+		file, err := os.Create("video.mp4")
+		if err != nil {
+			logrus.WithError(err).Error("Error creating file")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		if _, err = io.Copy(file, resp.Body); err != nil {
+			logrus.WithError(err).Error("Error encoding response body")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		ffmpeg, err := exec.LookPath("ffmpeg")
+		if err != nil {
+			logrus.WithError(err).Error("Error locating ffmpeg")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		cmd := exec.Command(ffmpeg, "-y", "-loglevel", "quiet", "-i", "video.mp4", "video.mp3")
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			logrus.WithError(err).Error("Error executing ffmpeg command")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		audioBytes, err := ioutil.ReadFile("video.mp3")
+		if err != nil {
+			logrus.WithError(err).Error("Error reading file")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		if err = os.Remove("video.mp4"); err != nil {
+			logrus.WithError(err).Error("Error deleting video file")
+		}
+		if err = os.Remove("video.mp3"); err != nil {
+			logrus.WithError(err).Error("Error deleting audio file")
+		}
+
+		track := models.Track{
+			ID:        primitive.NewObjectID(),
+			Name:      ytRequest.Name,
+			Artist:    ytRequest.Artist,
+			AlbumName: ytRequest.AlbumName,
+		}
+
+		if track.Name == "" {
+			track.Name = "Unknown"
+		}
+		if track.Artist == "" {
+			track.Artist = "Unknown Artist"
+		}
+		if track.AlbumName == "" {
+			track.AlbumName = "Unknown Album"
+		}
+
+		audioID, err := handler.UploadAudioFile(ctx, audioBytes, track.Name)
+		if err != nil {
+			logrus.WithError(err).Error("Error adding track to database")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		if _, ok := audioID.(primitive.ObjectID); !ok {
+			logrus.WithError(err).Error("Did not receive valid audioFileID from upload stream")
 			respondWithError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -219,6 +351,16 @@ func updateTrack(handler dao.DbHandler) http.HandlerFunc {
 			logrus.WithError(err).Error("Error decoding request body")
 			respondWithError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+
+		if updatedTrack.Name == "" {
+			updatedTrack.Name = "Unknown"
+		}
+		if updatedTrack.Artist == "" {
+			updatedTrack.Artist = "Unknown Artist"
+		}
+		if updatedTrack.AlbumName == "" {
+			updatedTrack.AlbumName = "Unknown Album"
 		}
 
 		if err := handler.UpdateTrack(ctx, id, updatedTrack); err != nil {

@@ -17,6 +17,20 @@ type DbHandler struct {
 	mock.Mock
 }
 
+// AddPlaylist provides a mock function with given fields: ctx, playlist
+func (_m *DbHandler) AddPlaylist(ctx context.Context, playlist models.Playlist) error {
+	ret := _m.Called(ctx, playlist)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, models.Playlist) error); ok {
+		r0 = rf(ctx, playlist)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // AddTrack provides a mock function with given fields: ctx, track
 func (_m *DbHandler) AddTrack(ctx context.Context, track models.Track) error {
 	ret := _m.Called(ctx, track)
@@ -24,6 +38,34 @@ func (_m *DbHandler) AddTrack(ctx context.Context, track models.Track) error {
 	var r0 error
 	if rf, ok := ret.Get(0).(func(context.Context, models.Track) error); ok {
 		r0 = rf(ctx, track)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// DeletePlaylist provides a mock function with given fields: ctx, id
+func (_m *DbHandler) DeletePlaylist(ctx context.Context, id primitive.ObjectID) error {
+	ret := _m.Called(ctx, id)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, primitive.ObjectID) error); ok {
+		r0 = rf(ctx, id)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// DeleteTrack provides a mock function with given fields: ctx, id
+func (_m *DbHandler) DeleteTrack(ctx context.Context, id primitive.ObjectID) error {
+	ret := _m.Called(ctx, id)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, primitive.ObjectID) error); ok {
+		r0 = rf(ctx, id)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -47,6 +89,29 @@ func (_m *DbHandler) DownloadAudioFile(ctx context.Context, audioFileID primitiv
 	var r1 error
 	if rf, ok := ret.Get(1).(func(context.Context, primitive.ObjectID) error); ok {
 		r1 = rf(ctx, audioFileID)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// GetPlaylists provides a mock function with given fields: ctx, filters
+func (_m *DbHandler) GetPlaylists(ctx context.Context, filters map[string]interface{}) ([]models.Playlist, error) {
+	ret := _m.Called(ctx, filters)
+
+	var r0 []models.Playlist
+	if rf, ok := ret.Get(0).(func(context.Context, map[string]interface{}) []models.Playlist); ok {
+		r0 = rf(ctx, filters)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]models.Playlist)
+		}
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, map[string]interface{}) error); ok {
+		r1 = rf(ctx, filters)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -84,6 +149,34 @@ func (_m *DbHandler) Ping(ctx context.Context) error {
 	var r0 error
 	if rf, ok := ret.Get(0).(func(context.Context) error); ok {
 		r0 = rf(ctx)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// UpdatePlaylist provides a mock function with given fields: ctx, playlistId, update
+func (_m *DbHandler) UpdatePlaylist(ctx context.Context, playlistId primitive.ObjectID, update primitive.M) error {
+	ret := _m.Called(ctx, playlistId, update)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, primitive.ObjectID, primitive.M) error); ok {
+		r0 = rf(ctx, playlistId, update)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// UpdateTrack provides a mock function with given fields: ctx, id, updatedTrack
+func (_m *DbHandler) UpdateTrack(ctx context.Context, id primitive.ObjectID, updatedTrack models.Track) error {
+	ret := _m.Called(ctx, id, updatedTrack)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, primitive.ObjectID, models.Track) error); ok {
+		r0 = rf(ctx, id, updatedTrack)
 	} else {
 		r0 = ret.Error(0)
 	}

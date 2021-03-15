@@ -4,24 +4,24 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo/readpref"
 
 	"music-stream-api/pkg/models"
 
 	"github.com/sirupsen/logrus"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/gridfs"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 type MongoClient struct {
-	Client					*mongo.Client
-	Database				string
-	TrackCollection			string
-	PlaylistCollection		string
-	AudioCollection			string
-	AudioChunkCollection	string
+	Client               *mongo.Client
+	Database             string
+	TrackCollection      string
+	PlaylistCollection   string
+	AudioCollection      string
+	AudioChunkCollection string
 }
 
 func (db *MongoClient) getTrackCollection() *mongo.Collection {

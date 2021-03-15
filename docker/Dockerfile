@@ -6,6 +6,7 @@ RUN rm -f go.sum
 RUN go build -o ./app ./main.go
 
 FROM alpine:3.13.1
+RUN apk update && apk upgrade && apk add ffmpeg
 WORKDIR /app
 COPY --from=builder /music-stream-api/app .
 EXPOSE 8002
