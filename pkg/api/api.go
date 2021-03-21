@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-
+	"errors"
 	"io"
 	"io/ioutil"
+	"music-stream-api/pkg/service"
 	"net/http"
 	"os"
 	"os/exec"
@@ -72,22 +73,27 @@ func route() (*mux.Router, error) {
 
 	client := youtube.Client{}
 
+	extHandler := service.ExternalHandler{
+		LoginServiceURL: os.Getenv("LOGIN_URL"),
+		HttpClient:      http.DefaultClient,
+	}
+
 	r := mux.NewRouter()
 
 	r.HandleFunc("/health", checkHealth(&dbHandler)).Methods(http.MethodGet)
 
-	r.HandleFunc("/track", uploadTrack(&dbHandler)).Methods(http.MethodPost)
-	r.HandleFunc("/track/{id}", getTrackAudio(&dbHandler)).Methods(http.MethodGet)
-	r.HandleFunc("/track/{id}", updateTrack(&dbHandler)).Methods(http.MethodPut)
-	r.HandleFunc("/track/{id}", deleteTrack(&dbHandler)).Methods(http.MethodDelete)
-	r.HandleFunc("/tracks", getTracks(&dbHandler)).Methods(http.MethodGet)
-	r.HandleFunc("/youtube/track", uploadTrackFromYoutubeLink(&dbHandler, &client)).Methods(http.MethodPost)
+	r.HandleFunc("/track", uploadTrack(&dbHandler, &extHandler)).Methods(http.MethodPost)
+	r.HandleFunc("/track/{id}", getTrackAudio(&dbHandler, &extHandler)).Methods(http.MethodGet)
+	r.HandleFunc("/track/{id}", updateTrack(&dbHandler, &extHandler)).Methods(http.MethodPut)
+	r.HandleFunc("/track/{id}", deleteTrack(&dbHandler, &extHandler)).Methods(http.MethodDelete)
+	r.HandleFunc("/tracks", getTracks(&dbHandler, &extHandler)).Methods(http.MethodGet)
+	r.HandleFunc("/youtube/track", uploadTrackFromYoutubeLink(&dbHandler, &client, &extHandler)).Methods(http.MethodPost)
 
-	r.HandleFunc("/playlist", addPlaylist(&dbHandler)).Methods(http.MethodPost)
-	r.HandleFunc("/playlist/{playlistid}/track/{trackid}", addTrackToPlaylist(&dbHandler)).Methods(http.MethodPost)
-	r.HandleFunc("/playlist/{playlistid}/track/{trackid}", removeTrackFromPlaylist(&dbHandler)).Methods(http.MethodDelete)
-	r.HandleFunc("/playlist/{id}", deletePlaylist(&dbHandler)).Methods(http.MethodDelete)
-	r.HandleFunc("/playlists", getPlaylists(&dbHandler)).Methods(http.MethodGet)
+	r.HandleFunc("/playlist", addPlaylist(&dbHandler, &extHandler)).Methods(http.MethodPost)
+	r.HandleFunc("/playlist/{playlistid}/track/{trackid}", addTrackToPlaylist(&dbHandler, &extHandler)).Methods(http.MethodPost)
+	r.HandleFunc("/playlist/{playlistid}/track/{trackid}", removeTrackFromPlaylist(&dbHandler, &extHandler)).Methods(http.MethodDelete)
+	r.HandleFunc("/playlist/{id}", deletePlaylist(&dbHandler, &extHandler)).Methods(http.MethodDelete)
+	r.HandleFunc("/playlists", getPlaylists(&dbHandler, &extHandler)).Methods(http.MethodGet)
 
 	return r, nil
 }
@@ -104,9 +110,23 @@ func checkHealth(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func uploadTrack(handler dao.DbHandler) http.HandlerFunc {
+func uploadTrack(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
+
 		if err := r.ParseForm(); err != nil {
 			logrus.WithError(err).Error("Error parsing request form")
 			respondWithError(w, http.StatusBadRequest, err.Error())
@@ -177,9 +197,23 @@ func uploadTrack(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient) http.HandlerFunc {
+func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		var ytRequest models.YoutubeRequest
 		if err := json.NewDecoder(r.Body).Decode(&ytRequest); err != nil {
@@ -296,12 +330,25 @@ func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient) htt
 	}
 }
 
-func getTrackAudio(handler dao.DbHandler) http.HandlerFunc {
+func getTrackAudio(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		id := mux.Vars(r)["id"]
 
 		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		objectID, err := primitive.ObjectIDFromHex(id)
 		if err != nil {
@@ -334,10 +381,23 @@ func getTrackAudio(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func updateTrack(handler dao.DbHandler) http.HandlerFunc {
+func updateTrack(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		id, err := primitive.ObjectIDFromHex(mux.Vars(r)["id"])
 		if err != nil {
@@ -374,10 +434,23 @@ func updateTrack(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func deleteTrack(handler dao.DbHandler) http.HandlerFunc {
+func deleteTrack(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		id, err := primitive.ObjectIDFromHex(mux.Vars(r)["id"])
 		if err != nil {
@@ -397,10 +470,23 @@ func deleteTrack(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func getTracks(handler dao.DbHandler) http.HandlerFunc {
+func getTracks(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		if err := r.ParseForm(); err != nil {
 			logrus.WithError(err).Error("Error parsing request form")
@@ -426,10 +512,23 @@ func getTracks(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func addPlaylist(handler dao.DbHandler) http.HandlerFunc {
+func addPlaylist(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		var playlist models.Playlist
 		if err := json.NewDecoder(r.Body).Decode(&playlist); err != nil {
@@ -451,10 +550,23 @@ func addPlaylist(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func addTrackToPlaylist(handler dao.DbHandler) http.HandlerFunc {
+func addTrackToPlaylist(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		playlistId := mux.Vars(r)["playlistid"]
 		trackId := mux.Vars(r)["trackid"]
@@ -492,10 +604,23 @@ func addTrackToPlaylist(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func removeTrackFromPlaylist(handler dao.DbHandler) http.HandlerFunc {
+func removeTrackFromPlaylist(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		playlistId := mux.Vars(r)["playlistid"]
 		trackId := mux.Vars(r)["trackid"]
@@ -533,10 +658,23 @@ func removeTrackFromPlaylist(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func deletePlaylist(handler dao.DbHandler) http.HandlerFunc {
+func deletePlaylist(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		id, err := primitive.ObjectIDFromHex(mux.Vars(r)["id"])
 		if err != nil {
@@ -556,10 +694,23 @@ func deletePlaylist(handler dao.DbHandler) http.HandlerFunc {
 	}
 }
 
-func getPlaylists(handler dao.DbHandler) http.HandlerFunc {
+func getPlaylists(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
 
 		if err := r.ParseForm(); err != nil {
 			logrus.WithError(err).Error("Error parsing request form")
@@ -636,4 +787,14 @@ func closeRequestBody(req *http.Request) {
 		return
 	}
 	return
+}
+
+func getAuthToken(r *http.Request) (string, error) {
+	tokenHeader := r.Header.Get("Authorization")
+	if tokenHeader == "" {
+		return "", errors.New("no authorization header found")
+	} else if (len(tokenHeader) >= 7 && tokenHeader[:7] != "Bearer ") || len(strings.Split(tokenHeader, " ")) != 2 {
+		return "", errors.New("authorization header must be in format 'Bearer' <token>")
+	}
+	return strings.Split(tokenHeader, " ")[1], nil
 }
