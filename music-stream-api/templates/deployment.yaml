@@ -36,3 +36,9 @@ spec:
                                 name: music-stream-api
                                 key: MONGO_URI
                                 optional: false
+                      - name: "LOGIN_URL"
+                        valueFrom:
+                            secretKeyRef:
+                                name: music-stream-api
+                                key: LOGIN_URL
+                                optional: false
