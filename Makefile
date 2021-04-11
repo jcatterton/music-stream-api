@@ -9,3 +9,5 @@ coverage:
 mocks:
 	mockery --name=DbHandler --recursive=true --case=underscore --output=./pkg/testhelper/mocks;
 	mockery --name=YoutubeClient --recursive=true --case=underscore --output=./pkg/testhelper/mocks;
+	mockery --name=ExtHandler --recursive=true --case=underscore --output=./pkg/testhelper/mocks;
+	mockery --name=Requestor --recursive=true --case=underscore --output=./pkg/testhelper/mocks;

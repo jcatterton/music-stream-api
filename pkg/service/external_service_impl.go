@@ -6,8 +6,12 @@ import (
 	"net/http"
 )
 
+type Requestor interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
 type ExternalHandler struct {
-	HttpClient      *http.Client
+	HttpClient      Requestor
 	LoginServiceURL string
 }
 

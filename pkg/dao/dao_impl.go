@@ -15,7 +15,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
-type MongoClient struct {
+type DatabaseHandler struct {
 	Client               *mongo.Client
 	Database             string
 	TrackCollection      string
@@ -24,23 +24,23 @@ type MongoClient struct {
 	AudioChunkCollection string
 }
 
-func (db *MongoClient) getTrackCollection() *mongo.Collection {
+func (db *DatabaseHandler) getTrackCollection() *mongo.Collection {
 	return db.Client.Database(db.Database).Collection(db.TrackCollection)
 }
 
-func (db *MongoClient) getPlaylistCollection() *mongo.Collection {
+func (db *DatabaseHandler) getPlaylistCollection() *mongo.Collection {
 	return db.Client.Database(db.Database).Collection(db.PlaylistCollection)
 }
 
-func (db *MongoClient) getAudioCollection() *mongo.Collection {
+func (db *DatabaseHandler) getAudioCollection() *mongo.Collection {
 	return db.Client.Database(db.Database).Collection(db.AudioCollection)
 }
 
-func (db *MongoClient) getAudioChunkCollection() *mongo.Collection {
+func (db *DatabaseHandler) getAudioChunkCollection() *mongo.Collection {
 	return db.Client.Database(db.Database).Collection(db.AudioChunkCollection)
 }
 
-func (db *MongoClient) GetTracks(ctx context.Context, filters map[string]interface{}) ([]models.Track, error) {
+func (db *DatabaseHandler) GetTracks(ctx context.Context, filters map[string]interface{}) ([]models.Track, error) {
 	cursor, err := db.getTrackCollection().Find(ctx, filters)
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func (db *MongoClient) GetTracks(ctx context.Context, filters map[string]interfa
 	return results, nil
 }
 
-func (db *MongoClient) UploadAudioFile(ctx context.Context, audioFile []byte, trackName string) (interface{}, error) {
+func (db *DatabaseHandler) UploadAudioFile(ctx context.Context, audioFile []byte, trackName string) (interface{}, error) {
 	bucket, err := gridfs.NewBucket(db.Client.Database(db.Database))
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (db *MongoClient) UploadAudioFile(ctx context.Context, audioFile []byte, tr
 	return uploadStream.FileID, nil
 }
 
-func (db *MongoClient) AddTrack(ctx context.Context, track models.Track) error {
+func (db *DatabaseHandler) AddTrack(ctx context.Context, track models.Track) error {
 	results, err := db.getTrackCollection().InsertOne(ctx, track)
 	if err != nil {
 		return err
@@ -88,7 +88,7 @@ func (db *MongoClient) AddTrack(ctx context.Context, track models.Track) error {
 	return nil
 }
 
-func (db *MongoClient) DownloadAudioFile(ctx context.Context, audioFileID primitive.ObjectID) ([]byte, error) {
+func (db *DatabaseHandler) DownloadAudioFile(ctx context.Context, audioFileID primitive.ObjectID) ([]byte, error) {
 	bucket, err := gridfs.NewBucket(db.Client.Database(db.Database))
 	if err != nil {
 		return nil, err
@@ -103,7 +103,7 @@ func (db *MongoClient) DownloadAudioFile(ctx context.Context, audioFileID primit
 	return buf.Bytes(), nil
 }
 
-func (db *MongoClient) UpdateTrack(ctx context.Context, id primitive.ObjectID, updatedTrack models.Track) error {
+func (db *DatabaseHandler) UpdateTrack(ctx context.Context, id primitive.ObjectID, updatedTrack models.Track) error {
 	filter := map[string]interface{}{"_id": id}
 
 	findResult := db.getTrackCollection().FindOne(ctx, filter)
@@ -134,7 +134,7 @@ func (db *MongoClient) UpdateTrack(ctx context.Context, id primitive.ObjectID, u
 	return nil
 }
 
-func (db *MongoClient) DeleteTrack(ctx context.Context, id primitive.ObjectID) error {
+func (db *DatabaseHandler) DeleteTrack(ctx context.Context, id primitive.ObjectID) error {
 	filter := map[string]interface{}{"_id": id}
 
 	result := db.getTrackCollection().FindOneAndDelete(ctx, filter)
@@ -165,7 +165,7 @@ func (db *MongoClient) DeleteTrack(ctx context.Context, id primitive.ObjectID) e
 	return nil
 }
 
-func (db *MongoClient) AddPlaylist(ctx context.Context, playlist models.Playlist) error {
+func (db *DatabaseHandler) AddPlaylist(ctx context.Context, playlist models.Playlist) error {
 	results, err := db.getPlaylistCollection().InsertOne(ctx, playlist)
 	if err != nil {
 		return err
@@ -175,7 +175,7 @@ func (db *MongoClient) AddPlaylist(ctx context.Context, playlist models.Playlist
 	return nil
 }
 
-func (db *MongoClient) UpdatePlaylist(ctx context.Context, playlistId primitive.ObjectID, update bson.M) error {
+func (db *DatabaseHandler) UpdatePlaylist(ctx context.Context, playlistId primitive.ObjectID, update bson.M) error {
 	results := db.getPlaylistCollection().FindOneAndUpdate(ctx, map[string]interface{}{"_id": playlistId}, update)
 	if results.Err() != nil {
 		return results.Err()
@@ -183,7 +183,7 @@ func (db *MongoClient) UpdatePlaylist(ctx context.Context, playlistId primitive.
 	return nil
 }
 
-func (db *MongoClient) DeletePlaylist(ctx context.Context, id primitive.ObjectID) error {
+func (db *DatabaseHandler) DeletePlaylist(ctx context.Context, id primitive.ObjectID) error {
 	results, err := db.getPlaylistCollection().DeleteOne(ctx, map[string]interface{}{"_id": id})
 	if err != nil {
 		return err
@@ -193,7 +193,7 @@ func (db *MongoClient) DeletePlaylist(ctx context.Context, id primitive.ObjectID
 	return nil
 }
 
-func (db *MongoClient) GetPlaylists(ctx context.Context, filters map[string]interface{}) ([]models.Playlist, error) {
+func (db *DatabaseHandler) GetPlaylists(ctx context.Context, filters map[string]interface{}) ([]models.Playlist, error) {
 	cursor, err := db.getPlaylistCollection().Find(ctx, filters)
 	if err != nil {
 		return nil, err
@@ -206,6 +206,6 @@ func (db *MongoClient) GetPlaylists(ctx context.Context, filters map[string]inte
 	return results, nil
 }
 
-func (db *MongoClient) Ping(ctx context.Context) error {
+func (db *DatabaseHandler) Ping(ctx context.Context) error {
 	return db.Client.Ping(ctx, readpref.Primary())
 }

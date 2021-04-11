@@ -62,7 +62,7 @@ func route() (*mux.Router, error) {
 		return nil, err
 	}
 
-	dbHandler := dao.MongoClient{
+	dbHandler := dao.DatabaseHandler{
 		Client:               dbClient,
 		Database:             "db",
 		TrackCollection:      "songs",
