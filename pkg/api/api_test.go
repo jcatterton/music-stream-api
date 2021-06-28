@@ -291,7 +291,7 @@ func TestApi_UploadTrackFromYoutubeLink_ShouldReturnErrorIfGetStreamReturnsError
 	extHandler := &mocks.ExtHandler{}
 	client := &mocks.YoutubeClient{}
 	client.On("GetVideo", mock.Anything).Return(&youtube.Video{Formats: []youtube.Format{{}}}, nil)
-	client.On("GetStream", mock.Anything, mock.Anything).Return(nil, errors.New("test"))
+	client.On("GetStream", mock.Anything, mock.Anything).Return(nil, int64(0), errors.New("test"))
 	extHandler.On("ValidateToken", mock.Anything, mock.Anything).Return(nil)
 
 	req, err := http.NewRequest(http.MethodPost, "/youtube/track", strings.NewReader(`{"youtubeLink":"www.youtube.com?v=test&channel=test"}`))

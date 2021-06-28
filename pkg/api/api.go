@@ -30,7 +30,7 @@ import (
 
 type YoutubeClient interface {
 	GetVideo(videoId string) (*youtube.Video, error)
-	GetStream(video *youtube.Video, format *youtube.Format) (*http.Response, error)
+	GetStream(video *youtube.Video, format *youtube.Format) (io.ReadCloser, int64, error)
 }
 
 func ListenAndServe() error {
@@ -231,17 +231,20 @@ func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext
 			return
 		}
 
-		resp, err := client.GetStream(video, &video.Formats[0])
+		formatIndex := 0
+		for i, format := range video.Formats {
+			if strings.Contains(format.MimeType, "audio/mp4") {
+				formatIndex = i
+				break
+			}
+		}
+
+		stream, _, err := client.GetStream(video, &video.Formats[formatIndex])
 		if err != nil {
 			logrus.WithError(err).Error("Error getting video stream")
 			respondWithError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		defer func() {
-			if err = resp.Body.Close(); err != nil {
-				logrus.WithError(err).Error("Error closing response body")
-			}
-		}()
 
 		file, err := os.Create("video.mp4")
 		if err != nil {
@@ -250,7 +253,16 @@ func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext
 			return
 		}
 
-		if _, err = io.Copy(file, resp.Body); err != nil {
+		defer func() {
+			if err := file.Close(); err != nil {
+				logrus.WithError(err).Error("Error closing file")
+			}
+			if err := stream.Close(); err != nil {
+				logrus.WithError(err).Error("Error closing stream")
+			}
+		}()
+
+		if _, err = io.Copy(file, stream); err != nil {
 			logrus.WithError(err).Error("Error encoding response body")
 			respondWithError(w, http.StatusInternalServerError, err.Error())
 			return
