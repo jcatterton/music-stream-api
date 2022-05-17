@@ -24,3 +24,8 @@ type YoutubeRequest struct {
 	AlbumName   string `json:"album,omitempty"`
 	YoutubeLink string `json:"youtubeLink"`
 }
+
+type UploadRequest struct {
+	YoutubeRequest `json:"youtubeRequest"`
+	AudioBytes     []byte `json:"audioBytes"`
+}

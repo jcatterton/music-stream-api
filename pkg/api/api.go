@@ -87,13 +87,19 @@ func route() (*mux.Router, error) {
 	r.HandleFunc("/track/{id}", updateTrack(&dbHandler, &extHandler)).Methods(http.MethodPut)
 	r.HandleFunc("/track/{id}", deleteTrack(&dbHandler, &extHandler)).Methods(http.MethodDelete)
 	r.HandleFunc("/tracks", getTracks(&dbHandler, &extHandler)).Methods(http.MethodGet)
-	r.HandleFunc("/youtube/track", uploadTrackFromYoutubeLink(&dbHandler, &client, &extHandler)).Methods(http.MethodPost)
+	r.HandleFunc("/video", getVideo(&extHandler, &client)).Methods(http.MethodPost)
+	r.HandleFunc("/stream", getStream(&extHandler, &client)).Methods(http.MethodPost)
+	r.HandleFunc("/convert", convertStreamToAudio(&extHandler)).Methods(http.MethodPost)
+	r.HandleFunc("/upload", uploadAudioBytes(&dbHandler, &extHandler)).Methods(http.MethodPost)
 
 	r.HandleFunc("/playlist", addPlaylist(&dbHandler, &extHandler)).Methods(http.MethodPost)
 	r.HandleFunc("/playlist/{playlistid}/track/{trackid}", addTrackToPlaylist(&dbHandler, &extHandler)).Methods(http.MethodPost)
 	r.HandleFunc("/playlist/{playlistid}/track/{trackid}", removeTrackFromPlaylist(&dbHandler, &extHandler)).Methods(http.MethodDelete)
 	r.HandleFunc("/playlist/{id}", deletePlaylist(&dbHandler, &extHandler)).Methods(http.MethodDelete)
 	r.HandleFunc("/playlists", getPlaylists(&dbHandler, &extHandler)).Methods(http.MethodGet)
+
+	//Deprecated
+	r.HandleFunc("/youtube/track", uploadTrackFromYoutubeLink(&dbHandler, &client, &extHandler)).Methods(http.MethodPost)
 
 	return r, nil
 }
@@ -197,9 +203,8 @@ func uploadTrack(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc
 	}
 }
 
-func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext service.ExtHandler) http.HandlerFunc {
+func getVideo(ext service.ExtHandler, client YoutubeClient) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
 		defer closeRequestBody(r)
 
 		token, err := getAuthToken(r)
@@ -231,6 +236,34 @@ func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext
 			return
 		}
 
+		respondWithSuccess(w, http.StatusOK, video)
+	}
+}
+
+func getStream(ext service.ExtHandler, client YoutubeClient) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
+
+		var video youtube.Video
+		if err := json.NewDecoder(r.Body).Decode(&video); err != nil {
+			logrus.WithError(err).Error("Error decoding request body")
+			respondWithError(w, http.StatusBadRequest, "Error decoding request body")
+			return
+		}
+
 		formatIndex := 0
 		for i, format := range video.Formats {
 			if strings.Contains(format.MimeType, "audio/mp4") {
@@ -239,7 +272,7 @@ func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext
 			}
 		}
 
-		stream, _, err := client.GetStream(video, &video.Formats[formatIndex])
+		stream, _, err := client.GetStream(&video, &video.Formats[formatIndex])
 		if err != nil {
 			logrus.WithError(err).Error("Error getting video stream")
 			respondWithError(w, http.StatusInternalServerError, err.Error())
@@ -265,6 +298,27 @@ func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext
 		if _, err = io.Copy(file, stream); err != nil {
 			logrus.WithError(err).Error("Error encoding response body")
 			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		respondWithSuccess(w, http.StatusOK, "Stream file created successfully")
+	}
+}
+
+func convertStreamToAudio(ext service.ExtHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
 			return
 		}
 
@@ -300,11 +354,40 @@ func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext
 			logrus.WithError(err).Error("Error deleting audio file")
 		}
 
+		respondWithSuccessBytes(w, http.StatusOK, audioBytes)
+	}
+}
+
+func uploadAudioBytes(handler dao.DbHandler, ext service.ExtHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
+
+		var uploadRequest models.UploadRequest
+		if err := json.NewDecoder(r.Body).Decode(&uploadRequest); err != nil {
+			logrus.WithError(err).Error("Error decoding request body")
+			respondWithError(w, http.StatusBadRequest, "Error decoding request body")
+			return
+		}
+
 		track := models.Track{
 			ID:        primitive.NewObjectID(),
-			Name:      ytRequest.Name,
-			Artist:    ytRequest.Artist,
-			AlbumName: ytRequest.AlbumName,
+			Name:      uploadRequest.YoutubeRequest.Name,
+			Artist:    uploadRequest.YoutubeRequest.Artist,
+			AlbumName: uploadRequest.YoutubeRequest.AlbumName,
 		}
 
 		if track.Name == "" {
@@ -317,7 +400,7 @@ func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext
 			track.AlbumName = "Unknown Album"
 		}
 
-		audioID, err := handler.UploadAudioFile(ctx, audioBytes, track.Name)
+		audioID, err := handler.UploadAudioFile(ctx, uploadRequest.AudioBytes, track.Name)
 		if err != nil {
 			logrus.WithError(err).Error("Error adding track to database")
 			respondWithError(w, http.StatusInternalServerError, err.Error())
@@ -778,6 +861,18 @@ func respondWithSuccess(w http.ResponseWriter, code int, body interface{}) {
 	}
 }
 
+func respondWithSuccessBytes(w http.ResponseWriter, code int, body []byte) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(code)
+	if body == nil {
+		logrus.Error("Body is nil, unable to write response")
+		return
+	}
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		logrus.WithError(err).Error("Error encoding response")
+	}
+}
+
 func respondWithError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
@@ -809,4 +904,150 @@ func getAuthToken(r *http.Request) (string, error) {
 		return "", errors.New("authorization header must be in format 'Bearer' <token>")
 	}
 	return strings.Split(tokenHeader, " ")[1], nil
+}
+
+// Deprecated
+func uploadTrackFromYoutubeLink(handler dao.DbHandler, client YoutubeClient, ext service.ExtHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		defer closeRequestBody(r)
+
+		token, err := getAuthToken(r)
+		if err != nil {
+			logrus.WithError(err).Error("Error retrieving auth token")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		if err := ext.ValidateToken(token); err != nil {
+			logrus.WithError(err).Error("Authentication failed")
+			respondWithError(w, http.StatusUnauthorized, "Authentication failed")
+			return
+		}
+
+		var ytRequest models.YoutubeRequest
+		if err := json.NewDecoder(r.Body).Decode(&ytRequest); err != nil {
+			logrus.WithError(err).Error("Error decoding request into JSON")
+			respondWithError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		videoId := strings.Split(strings.Split(ytRequest.YoutubeLink, "v=")[1], "&")[0]
+
+		video, err := client.GetVideo(videoId)
+		if err != nil {
+			logrus.WithError(err).Error("Error getting video")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		formatIndex := 0
+		for i, format := range video.Formats {
+			if strings.Contains(format.MimeType, "audio/mp4") {
+				formatIndex = i
+				break
+			}
+		}
+
+		stream, _, err := client.GetStream(video, &video.Formats[formatIndex])
+		if err != nil {
+			logrus.WithError(err).Error("Error getting video stream")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		file, err := os.Create("video.mp4")
+		if err != nil {
+			logrus.WithError(err).Error("Error creating file")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		defer func() {
+			if err := file.Close(); err != nil {
+				logrus.WithError(err).Error("Error closing file")
+			}
+			if err := stream.Close(); err != nil {
+				logrus.WithError(err).Error("Error closing stream")
+			}
+		}()
+
+		if _, err = io.Copy(file, stream); err != nil {
+			logrus.WithError(err).Error("Error encoding response body")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		ffmpeg, err := exec.LookPath("ffmpeg")
+		if err != nil {
+			logrus.WithError(err).Error("Error locating ffmpeg")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		cmd := exec.Command(ffmpeg, "-y", "-loglevel", "quiet", "-i", "video.mp4", "video.mp3")
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			logrus.WithError(err).Error("Error executing ffmpeg command")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		audioBytes, err := ioutil.ReadFile("video.mp3")
+		if err != nil {
+			logrus.WithError(err).Error("Error reading file")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		if err = os.Remove("video.mp4"); err != nil {
+			logrus.WithError(err).Error("Error deleting video file")
+		}
+		if err = os.Remove("video.mp3"); err != nil {
+			logrus.WithError(err).Error("Error deleting audio file")
+		}
+
+		track := models.Track{
+			ID:        primitive.NewObjectID(),
+			Name:      ytRequest.Name,
+			Artist:    ytRequest.Artist,
+			AlbumName: ytRequest.AlbumName,
+		}
+
+		if track.Name == "" {
+			track.Name = "Unknown"
+		}
+		if track.Artist == "" {
+			track.Artist = "Unknown Artist"
+		}
+		if track.AlbumName == "" {
+			track.AlbumName = "Unknown Album"
+		}
+
+		audioID, err := handler.UploadAudioFile(ctx, audioBytes, track.Name)
+		if err != nil {
+			logrus.WithError(err).Error("Error adding track to database")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		if _, ok := audioID.(primitive.ObjectID); !ok {
+			logrus.WithError(err).Error("Did not receive valid audioFileID from upload stream")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		track.AudioFileID = audioID.(primitive.ObjectID)
+
+		if err := handler.AddTrack(ctx, track); err != nil {
+			logrus.WithError(err).Error("Error adding track to database")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		respondWithSuccess(w, http.StatusOK, "Track added successfully")
+		return
+	}
 }

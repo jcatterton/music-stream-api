@@ -13,11 +13,11 @@ sed -i '' -E s/tag:\ [0-9]*\.[0-9]*\.[0-9]*\([-][A-Za-z0-9.-]+\)?/tag:\ ${VERSIO
 sed -i '' -E s/version:\ [0-9]*\.[0-9]*\.[0-9]*\([-][A-Za-z0-9.-]+\)?/version:\ ${VERSION}/g ./${CHART_REF}/Chart.yaml
 
 build() {
-  docker build -f ./docker/Dockerfile -t "192.168.1.15:5000/music-stream-api:${VERSION}" .
+  docker build -f ./docker/Dockerfile -t "192.168.68.108:5000/music-stream-api:${VERSION}" .
 }
 
 push() {
-  docker push "192.168.1.15:5000/music-stream-api:${VERSION}"
+  docker push "192.168.68.108:5000/music-stream-api:${VERSION}"
 }
 
 deploy() {
