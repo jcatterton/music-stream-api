@@ -4,7 +4,7 @@ replicas:
   min: 2
 image:
   repository: 192.168.68.108:5000/music-stream-api
-  tag: 1.6.0
+  tag: 1.6.1
   pullPolicy: Always
 service:
   type: NodePort

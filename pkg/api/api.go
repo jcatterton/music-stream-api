@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"music-stream-api/pkg/service"
 	"net/http"
 	"os"
@@ -46,8 +48,8 @@ func ListenAndServe() error {
 	server := &http.Server{
 		Handler:      handlers.CORS(headers, origins, methods)(router),
 		Addr:         ":8002",
-		WriteTimeout: 20 * time.Second,
-		ReadTimeout:  20 * time.Second,
+		WriteTimeout: 200 * time.Second,
+		ReadTimeout:  200 * time.Second,
 	}
 	shutdownGracefully(server)
 
@@ -100,8 +102,42 @@ func route() (*mux.Router, error) {
 
 	//Deprecated
 	r.HandleFunc("/youtube/track", uploadTrackFromYoutubeLink(&dbHandler, &client, &extHandler)).Methods(http.MethodPost)
+	r.HandleFunc("/test", test()).Methods(http.MethodPost)
+	r.HandleFunc("/test2", test2()).Methods(http.MethodPost)
 
 	return r, nil
+}
+
+func test() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type beans struct {
+			ByteArray []uint8 `json:"test"`
+		}
+
+		test := "test"
+		byteArray := []uint8(test)
+		fmt.Println(byteArray)
+		b := beans{
+			ByteArray: byteArray,
+		}
+		respondWithSuccess(w, http.StatusOK, b)
+	}
+}
+
+func test2() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type beans struct {
+			Test interface{} `json:"test"`
+		}
+
+		var a beans
+		if err := json.NewDecoder(r.Body).Decode(&a); err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		fmt.Println(a.Test.([]byte))
+	}
 }
 
 func checkHealth(handler dao.DbHandler) http.HandlerFunc {
@@ -265,14 +301,16 @@ func getStream(ext service.ExtHandler, client YoutubeClient) http.HandlerFunc {
 		}
 
 		formatIndex := 0
+		minContentLength := int64(math.MaxInt)
 		for i, format := range video.Formats {
-			if strings.Contains(format.MimeType, "audio/mp4") {
+			if strings.Contains(format.MimeType, "audio/mp4") && format.ContentLength < minContentLength {
 				formatIndex = i
+				minContentLength = format.ContentLength
 				break
 			}
 		}
 
-		stream, _, err := client.GetStream(&video, &video.Formats[formatIndex])
+		stream, size, err := client.GetStream(&video, &video.Formats[formatIndex])
 		if err != nil {
 			logrus.WithError(err).Error("Error getting video stream")
 			respondWithError(w, http.StatusInternalServerError, err.Error())
@@ -295,8 +333,15 @@ func getStream(ext service.ExtHandler, client YoutubeClient) http.HandlerFunc {
 			}
 		}()
 
-		if _, err = io.Copy(file, stream); err != nil {
+		b := make([]byte, size)
+		if _, err := io.ReadFull(stream, b); err != nil {
 			logrus.WithError(err).Error("Error encoding response body")
+			respondWithError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		if _, err := file.Write(b); err != nil {
+			logrus.WithError(err).Error("Error writing to file")
 			respondWithError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
